@@ -1,8 +1,8 @@
 # platform-fleet
 
-A production-pattern platform engineering project demonstrating always-on, self-service Kubernetes environments using GitOps, Infrastructure as Code, and preview environments per pull request.
+A platform engineering project in active development, building toward always-on, self-service Kubernetes environments using GitOps, Infrastructure as Code, and preview environments per pull request.
 
-Built to mirror the architecture patterns used in real-world platform engineering roles — specifically around fleet management, environment reproducibility, and developer experience.
+Built to mirror the architecture patterns used in real-world platform engineering roles — specifically around fleet management, environment reproducibility, and developer experience. Currently at Sprint 3: kind cluster + ArgoCD App of Apps pattern, podinfo syncing to the main environment. See Roadmap below for what's built vs. planned.
 
 ---
 
@@ -24,13 +24,15 @@ GitHub PR → GitHub Actions CI
      │                          │
   podinfo app              podinfo app (branch version)
   prometheus/grafana
+  (planned, Sprint 5)
 ```
 
 **Core Principles:**
-- `terraform apply` = full cluster with GitOps engine, zero manual steps
 - ArgoCD App of Apps pattern — all environments declared as code
-- Per-PR preview namespaces with automatic teardown
+- Per-PR preview namespaces with automatic teardown (workflow defined, see note below)
 - `make` targets as the self-service interface for engineers
+
+**Known gap:** there are currently two bootstrap paths — `make platform-up` (kind + raw `kubectl apply` of ArgoCD's install manifest) and a separate Terraform/Helm path under `terraform/environments/main`. They aren't wired together yet. Consolidating on one is planned for Sprint 4; until then, `make platform-up` is the path that's actually tested end-to-end.
 
 ---
 
@@ -76,11 +78,11 @@ platform-fleet/
 ├── terraform/
 │   ├── environments/
 │   │   ├── main/          # Always-on environment (Terraform root)
-│   │   └── preview/       # Preview env template (instantiated per PR)
+│   │   └── preview/       # (planned, Sprint 4) — preview env template per PR
 │   └── modules/
 │       ├── kind-cluster/  # Reusable kind cluster module
 │       ├── argocd/        # ArgoCD install via Helm provider
-│       └── monitoring/    # Prometheus + Grafana stack
+│       └── monitoring/    # (planned, Sprint 5) — Prometheus + Grafana stack
 ├── gitops/
 │   ├── apps/              # ArgoCD App of Apps definitions
 │   ├── base/              # Kustomize base manifests
@@ -111,11 +113,12 @@ platform-fleet/
 - Deployed via: ArgoCD watching `gitops/overlays/main`
 - Auto-syncs on every merge to `main` branch
 
-### Preview (Per Pull Request)
+### Preview (Per Pull Request) — planned, Sprint 4
 - Namespace: `preview-{pr-number}`
 - Purpose: Feature branch validation, rapid UX feedback
-- Lifecycle: Created on PR open → destroyed on PR merge/close
+- Lifecycle: workflow defined in `.github/workflows/preview.yaml` — creates/destroys the ArgoCD Application and namespace on PR open/close
 - URL posted as PR comment by GitHub Actions
+- **Known gap:** the workflow runs on a GitHub-hosted runner with no configured path to the local `kind` cluster, so it doesn't yet reach a real cluster end-to-end. Fixing this (likely via a self-hosted runner or a cloud-reachable cluster) is part of Sprint 4.
 
 ---
 
@@ -165,7 +168,6 @@ ArgoCD is configured with a single root `Application` that points to `gitops/app
 | Kustomize | `gitops/base/` + `gitops/overlays/` |
 | Multi-tenant environments | Namespace-isolated main + preview envs |
 | Developer Experience | Makefile self-service, one-command bootstrap |
-| Observability | Prometheus + Grafana (Sprint 5) |
 | Linux | Shell scripts, container runtime |
 
 ---
