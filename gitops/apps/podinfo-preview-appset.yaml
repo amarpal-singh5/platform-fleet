@@ -1,0 +1,55 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: podinfo-preview
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+
+  generators:
+    - pullRequest:
+        github:
+          owner: amarpal-singh5
+          repo: platform-fleet
+          # No tokenRef: unauthenticated GitHub API calls, capped at 60
+          # requests/hour. Fine for a personal project with a handful of
+          # PRs open at once. If that limit ever gets hit, the fix is a
+          # Secret holding a PAT and a tokenRef here - see ArgoCD's
+          # ApplicationSet docs for the exact field.
+        # How often ArgoCD re-polls GitHub for open PRs. Lower = preview
+        # envs appear/disappear faster after a PR opens/closes, at the
+        # cost of more API calls against that same rate limit above.
+        requeueAfterSeconds: 180
+
+  # Controls what happens to Applications this generator stops returning
+  # (i.e. the PR got closed/merged). false = actually delete the
+  # Application and cascade-delete its resources - this is what makes
+  # preview envs auto-teardown with zero GitHub Actions involvement.
+  syncPolicy:
+    preserveResourcesOnDeletion: false
+
+  template:
+    metadata:
+      name: "podinfo-preview-{{.number}}"
+      namespace: argocd
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/amarpal-singh5/platform-fleet.git
+        # The exact commit for this PR, not a branch name - so ArgoCD
+        # picks up every new push to the PR (auto-sync + selfHeal below
+        # notice the SHA change and redeploy) without any extra plumbing.
+        targetRevision: "{{.head_sha}}"
+        path: gitops/overlays/preview
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "preview-{{.number}}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
