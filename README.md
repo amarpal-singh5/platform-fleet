@@ -2,7 +2,7 @@
 
 A platform engineering project in active development, building toward always-on, self-service Kubernetes environments using GitOps, Infrastructure as Code, and preview environments per pull request.
 
-Built to mirror the architecture patterns used in real-world platform engineering roles — specifically around fleet management, environment reproducibility, and developer experience. Currently at Sprint 3: kind cluster + ArgoCD App of Apps pattern, podinfo syncing to the main environment. See Roadmap below for what's built vs. planned.
+Built to mirror the architecture patterns used in real-world platform engineering roles — specifically around fleet management, environment reproducibility, and developer experience. Cluster provisioning, ArgoCD install, and the App of Apps bootstrap are fully Terraform-driven end to end, including clean teardown. Preview environments per PR are scaffolded but not yet wired to a real cluster in CI. See Roadmap below for what's built vs. planned.
 
 ---
 
@@ -29,10 +29,9 @@ GitHub PR → GitHub Actions CI
 
 **Core Principles:**
 - ArgoCD App of Apps pattern — all environments declared as code
+- One bootstrap path: `make platform-up` → `terraform apply` → cluster + ArgoCD (Helm) + root Application, in that order, with matching teardown via `terraform destroy`
 - Per-PR preview namespaces with automatic teardown (workflow defined, see note below)
 - `make` targets as the self-service interface for engineers
-
-**Known gap:** there are currently two bootstrap paths — `make platform-up` (kind + raw `kubectl apply` of ArgoCD's install manifest) and a separate Terraform/Helm path under `terraform/environments/main`. They aren't wired together yet. Consolidating on one is planned for Sprint 4; until then, `make platform-up` is the path that's actually tested end-to-end.
 
 ---
 
@@ -78,11 +77,13 @@ platform-fleet/
 ├── terraform/
 │   ├── environments/
 │   │   ├── main/          # Always-on environment (Terraform root)
-│   │   └── preview/       # (planned, Sprint 4) — preview env template per PR
+│   │   └── preview/       # (planned) — preview env template per PR
 │   └── modules/
-│       ├── kind-cluster/  # Reusable kind cluster module
-│       ├── argocd/        # ArgoCD install via Helm provider
-│       └── monitoring/    # (planned, Sprint 5) — Prometheus + Grafana stack
+│       ├── kind-cluster/     # Reusable kind cluster module
+│       ├── argocd/           # ArgoCD install via Helm provider
+│       ├── argocd-bootstrap/ # Applies root App of Apps + handles destroy-time
+│       │                     # cleanup of Application finalizers
+│       └── monitoring/       # (planned) — Prometheus + Grafana stack
 ├── gitops/
 │   ├── apps/              # ArgoCD App of Apps definitions
 │   ├── base/              # Kustomize base manifests
@@ -113,35 +114,39 @@ platform-fleet/
 - Deployed via: ArgoCD watching `gitops/overlays/main`
 - Auto-syncs on every merge to `main` branch
 
-### Preview (Per Pull Request) — planned, Sprint 4
+### Preview (Per Pull Request) — planned
 - Namespace: `preview-{pr-number}`
 - Purpose: Feature branch validation, rapid UX feedback
 - Lifecycle: workflow defined in `.github/workflows/preview.yaml` — creates/destroys the ArgoCD Application and namespace on PR open/close
 - URL posted as PR comment by GitHub Actions
-- **Known gap:** the workflow runs on a GitHub-hosted runner with no configured path to the local `kind` cluster, so it doesn't yet reach a real cluster end-to-end. Fixing this (likely via a self-hosted runner or a cloud-reachable cluster) is part of Sprint 4.
+- **Known gap:** the workflow runs on a GitHub-hosted runner with no configured path to a real cluster (the local `kind` cluster isn't reachable from a GitHub-hosted runner), so it doesn't yet reach a real cluster end-to-end. Fixing this — likely via a self-hosted runner or a cloud-reachable cluster — is the next open item after this.
 
 ---
 
 ## Makefile Targets
 
 ```bash
-make platform-up       # Full bootstrap: cluster + ArgoCD + apps
-make platform-down     # Destroy everything
+make platform-up       # Full bootstrap via Terraform: cluster + ArgoCD + App of Apps
+make platform-down     # terraform destroy - tears down everything, incl. Application cleanup
 
-make cluster-up        # kind cluster only
-make cluster-down      # Delete kind cluster
-
-make argocd-install    # Install ArgoCD into existing cluster
-make argocd-ui         # Port-forward ArgoCD UI → localhost:8080
-make argocd-password   # Print initial admin password
-
-make app-ui            # Port-forward podinfo → localhost:9898
 make tf-init           # terraform init for main environment
 make tf-plan           # terraform plan for main environment
-make tf-apply          # terraform apply for main environment
+make tf-apply          # terraform apply for main environment (same as platform-up)
+make tf-destroy        # terraform destroy for main environment (same as platform-down)
+
+make argocd-ui         # Port-forward ArgoCD UI → localhost:8080
+make argocd-password   # Print initial admin password
+make app-ui            # Port-forward podinfo → localhost:9898
 
 make lint              # Run terraform fmt + validate
 make docs              # Generate docs from terraform modules
+
+# Debug only - NOT used by platform-up/down, bypasses Terraform entirely
+# with raw kind/kubectl. Will drift from the Terraform-managed install
+# (different ArgoCD install method/version). Use only for troubleshooting.
+make manual-cluster-up       # Create kind cluster directly
+make manual-cluster-down     # Delete kind cluster directly
+make manual-argocd-install   # Install ArgoCD via raw manifest
 ```
 
 ---
@@ -150,9 +155,10 @@ make docs              # Generate docs from terraform modules
 
 ArgoCD is configured with a single root `Application` that points to `gitops/apps/`. That directory contains `Application` CRDs for every other app — podinfo, monitoring, and namespace definitions. This means:
 
-1. ArgoCD is installed once by Terraform
-2. A single `kubectl apply` of the root app bootstraps everything else
-3. All future changes go through Git — no `kubectl apply` in production
+1. Terraform provisions the cluster and installs ArgoCD via Helm
+2. Terraform applies the root Application from `gitops/apps/root-app.yaml` directly (via `kubectl_manifest`, reading the same YAML file that's checked into the repo — no separate copy re-declared in HCL)
+3. ArgoCD takes it from there — all future changes go through Git, no manual `kubectl apply` in this flow
+4. On teardown, a destroy-time step strips ArgoCD's finalizers from any Applications in the namespace first (including ones ArgoCD's own controller created, like `podinfo-main`), so `terraform destroy` completes cleanly instead of hanging on a namespace stuck in `Terminating`
 
 ---
 
@@ -175,8 +181,9 @@ ArgoCD is configured with a single root `Application` that points to `gitops/app
 ## Roadmap
 
 - [x] Sprint 1: Repo scaffold + architecture
-- [ ] Sprint 2: Terraform kind cluster + ArgoCD install
-- [ ] Sprint 3: App of Apps — podinfo on main
-- [ ] Sprint 4: Preview environments via GitHub Actions
-- [ ] Sprint 5: Prometheus + Grafana observability
-- [ ] Sprint 6: Polish, one-liner demo, LinkedIn writeup
+- [x] Sprint 2: Terraform kind cluster + ArgoCD install
+- [x] Sprint 3: App of Apps — podinfo on main
+- [x] Sprint 4: Consolidate onto one Terraform-driven bootstrap path (cluster + ArgoCD + root Application, plus clean destroy-time Application-finalizer handling)
+- [ ] Sprint 5: Preview environments actually reaching a real cluster from GitHub Actions (workflow YAML exists, cluster connectivity doesn't yet)
+- [ ] Sprint 6: Prometheus + Grafana observability
+- [ ] Sprint 7: Polish, one-liner demo, LinkedIn writeup

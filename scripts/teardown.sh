@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo "This will delete the kind cluster 'platform-fleet' and all data."
+TF_MAIN_DIR="terraform/environments/main"
+
+echo "This will terraform destroy everything in ${TF_MAIN_DIR} (cluster, ArgoCD, apps)."
 read -r -p "Continue? [y/N] " confirm
 [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
-kind delete cluster --name platform-fleet
-echo "Cluster deleted."
+
+terraform -chdir="$TF_MAIN_DIR" destroy -auto-approve
+echo "Torn down."
