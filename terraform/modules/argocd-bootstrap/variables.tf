@@ -7,3 +7,13 @@ variable "argocd_ready" {
   EOT
   type = any
 }
+
+variable "argocd_namespace" {
+  description = <<-EOT
+    ArgoCD's namespace name. Pass module.argocd.namespace from the caller.
+    Used to scope the destroy-time Application finalizer cleanup, and the
+    reference itself is what creates the correct destroy-order dependency
+    on module.argocd's namespace resource (see null_resource in main.tf).
+  EOT
+  type = string
+}

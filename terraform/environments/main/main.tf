@@ -56,6 +56,7 @@ module "argocd" {
 }
 
 module "argocd_bootstrap" {
-  source       = "../../modules/argocd-bootstrap"
-  argocd_ready = module.argocd.release_name
+  source           = "../../modules/argocd-bootstrap"
+  argocd_ready     = module.argocd.release_name
+  argocd_namespace = module.argocd.namespace
 }
