@@ -5,7 +5,7 @@ variable "argocd_ready" {
     waits for ArgoCD's Helm release to exist first. Pass something like
     module.argocd.release_name from the caller.
   EOT
-  type = any
+  type        = any
 }
 
 variable "argocd_namespace" {
@@ -15,5 +15,5 @@ variable "argocd_namespace" {
     reference itself is what creates the correct destroy-order dependency
     on module.argocd's namespace resource (see null_resource in main.tf).
   EOT
-  type = string
+  type        = string
 }

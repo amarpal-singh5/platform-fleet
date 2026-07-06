@@ -16,8 +16,8 @@ data "kubectl_path_documents" "root_app" {
 }
 
 resource "kubectl_manifest" "root_app" {
-  for_each  = toset(data.kubectl_path_documents.root_app.documents)
-  yaml_body = each.value
+  for_each   = toset(data.kubectl_path_documents.root_app.documents)
+  yaml_body  = each.value
   depends_on = [var.argocd_ready]
 }
 
