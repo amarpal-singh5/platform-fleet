@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# First-time setup: checks prereqs, creates cluster, installs ArgoCD, bootstraps apps.
+# First-time setup: checks prereqs, then delegates the actual cluster +
+# ArgoCD + App of Apps bootstrap entirely to Terraform (terraform/environments/main).
+# This is the ONLY supported path - it is not a parallel implementation of
+# what Terraform does, it just calls Terraform and prints friendly output.
 set -euo pipefail
+
+TF_MAIN_DIR="terraform/environments/main"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
@@ -14,20 +19,15 @@ check_prereq() {
 info "Checking prerequisites..."
 for tool in docker kind kubectl terraform helm; do check_prereq "$tool"; done
 
-info "Creating kind cluster..."
-kind create cluster --name platform-fleet --config terraform/modules/kind-cluster/kind-config.yaml
+info "Running terraform init (if needed)..."
+terraform -chdir="$TF_MAIN_DIR" init -input=false
 
-info "Installing ArgoCD..."
-kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
-kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+info "Running terraform apply (cluster + ArgoCD + App of Apps)..."
+terraform -chdir="$TF_MAIN_DIR" apply -auto-approve
 
-info "Waiting for ArgoCD server (up to 2 min)..."
-kubectl wait --for=condition=available --timeout=120s deployment/argocd-server -n argocd
+ARGOCD_NS=$(terraform -chdir="$TF_MAIN_DIR" output -raw argocd_namespace)
+PASS=$(kubectl -n "$ARGOCD_NS" get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
 
-info "Bootstrapping App of Apps..."
-kubectl apply -f gitops/apps/root-app.yaml
-
-PASS=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
 echo ""
 info "Platform is up!"
 echo "  ArgoCD → make argocd-ui  |  http://localhost:8080  |  admin / ${PASS}"

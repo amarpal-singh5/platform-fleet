@@ -1,6 +1,6 @@
-.PHONY: help platform-up platform-down cluster-up cluster-down \
-        argocd-install argocd-ui argocd-password app-ui \
-        tf-init tf-plan tf-apply lint
+.PHONY: help platform-up platform-down manual-cluster-up manual-cluster-down \
+        manual-argocd-install argocd-ui argocd-password app-ui \
+        tf-init tf-plan tf-apply tf-destroy lint
 
 CLUSTER_NAME   := platform-fleet
 ARGOCD_NS      := argocd
@@ -14,35 +14,33 @@ help: ## Show this help
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 ## —— Platform ————————————————————————————————————————————————————————————————
-platform-up: cluster-up argocd-install argocd-bootstrap ## Full bootstrap: cluster + ArgoCD + apps
+platform-up: tf-apply ## Full bootstrap: cluster + ArgoCD + App of Apps, all via Terraform
 	@echo "✅ Platform is up. Run 'make argocd-ui' to open the dashboard."
 
-platform-down: cluster-down ## Destroy everything
+platform-down: tf-destroy ## Destroy everything
 	@echo "✅ Platform torn down."
 
-## —— Cluster —————————————————————————————————————————————————————————————————
-cluster-up: ## Create kind cluster
-	@echo "🔧 Creating kind cluster '$(CLUSTER_NAME)'..."
+## —— Manual escape hatch (NOT used by platform-up) —————————————————————————
+## These bypass Terraform entirely with raw kind/kubectl. Kept only for
+## debugging when you want a cluster without touching Terraform state.
+## They are not wired into platform-up/platform-down and will drift from
+## the Terraform-managed install (different ArgoCD install method/version).
+manual-cluster-up: ## [debug] Create kind cluster directly, no Terraform
+	@echo "🔧 [manual] Creating kind cluster '$(CLUSTER_NAME)'..."
 	@kind create cluster --name $(CLUSTER_NAME) --config terraform/modules/kind-cluster/kind-config.yaml
 	@echo "✅ Cluster ready. Context: kind-$(CLUSTER_NAME)"
 
-cluster-down: ## Delete kind cluster
-	@echo "🗑  Deleting kind cluster '$(CLUSTER_NAME)'..."
+manual-cluster-down: ## [debug] Delete kind cluster directly, no Terraform
+	@echo "🗑  [manual] Deleting kind cluster '$(CLUSTER_NAME)'..."
 	@kind delete cluster --name $(CLUSTER_NAME)
 
-## —— ArgoCD ——————————————————————————————————————————————————————————————————
-argocd-install: ## Install ArgoCD into cluster
-	@echo "🔧 Installing ArgoCD..."
+manual-argocd-install: ## [debug] Install ArgoCD via raw manifest, no Terraform
+	@echo "🔧 [manual] Installing ArgoCD..."
 	@kubectl create namespace $(ARGOCD_NS) --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl apply -n $(ARGOCD_NS) -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 	@echo "⏳ Waiting for ArgoCD to be ready..."
 	@kubectl wait --for=condition=available --timeout=120s deployment/argocd-server -n $(ARGOCD_NS)
-	@echo "✅ ArgoCD installed."
-
-argocd-bootstrap: ## Apply root App of Apps
-	@echo "🔧 Bootstrapping App of Apps..."
-	@kubectl apply -f gitops/apps/root-app.yaml
-	@echo "✅ Root application applied. ArgoCD will sync everything."
+	@echo "✅ ArgoCD installed. Now run: kubectl apply -f gitops/apps/root-app.yaml"
 
 argocd-ui: ## Port-forward ArgoCD UI → localhost:8080
 	@echo "🌐 ArgoCD UI → http://localhost:8080"
@@ -68,6 +66,9 @@ tf-plan: ## terraform plan for main environment
 
 tf-apply: ## terraform apply for main environment
 	@terraform -chdir=$(TF_MAIN_DIR) apply -auto-approve
+
+tf-destroy: ## terraform destroy for main environment
+	@terraform -chdir=$(TF_MAIN_DIR) destroy -auto-approve
 
 ## —— Lint ————————————————————————————————————————————————————————————————————
 lint: ## Run terraform fmt check + validate
