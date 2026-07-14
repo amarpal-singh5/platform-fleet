@@ -187,3 +187,4 @@ ArgoCD is configured with a single root `Application` that points to `gitops/app
 - [ ] Sprint 5: Preview environments actually reaching a real cluster from GitHub Actions (workflow YAML exists, cluster connectivity doesn't yet)
 - [ ] Sprint 6: Prometheus + Grafana observability
 - [ ] Sprint 7: Polish, one-liner demo, LinkedIn writeup
+
