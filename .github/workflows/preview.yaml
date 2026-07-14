@@ -28,5 +28,5 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `🚀 **Preview environment incoming**\n\nArgoCD will pick this PR up on its next poll (every ~3 min) and deploy it to \`${ns}\`.\n\nOnce synced, access locally:\n\`\`\`bash\nkubectl port-forward svc/podinfo -n ${ns} 9898:9898\n\`\`\`\n\nAuto-destroyed when this PR closes - ArgoCD notices it's no longer open and tears it down, no action needed here.`
+              body: `Preview env for this PR will deploy to \`${ns}\`. ArgoCD polls for open PRs every ~3 min, so give it a few minutes after this comment posts.\n\nOnce it's synced:\n\`\`\`bash\nkubectl port-forward svc/podinfo -n ${ns} 9898:9898\n\`\`\`\n\nGets torn down automatically when this PR closes - nothing to clean up manually.` 
             })
