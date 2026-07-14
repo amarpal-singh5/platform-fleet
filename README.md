@@ -2,15 +2,17 @@
 
 A platform engineering project in active development, building toward always-on, self-service Kubernetes environments using GitOps, Infrastructure as Code, and preview environments per pull request.
 
-Built to mirror the architecture patterns used in real-world platform engineering roles — specifically around fleet management, environment reproducibility, and developer experience. Cluster provisioning, ArgoCD install, and the App of Apps bootstrap are fully Terraform-driven end to end, including clean teardown. Preview environments per PR are scaffolded but not yet wired to a real cluster in CI. See Roadmap below for what's built vs. planned.
+Built to mirror the architecture patterns used in real-world platform engineering roles — specifically around fleet management, environment reproducibility, and developer experience. Cluster provisioning, ArgoCD install, and the App of Apps bootstrap are fully Terraform-driven end to end, including clean teardown. Preview environments per PR deploy and tear down automatically via an ArgoCD ApplicationSet — no CI job touches the cluster directly. See Roadmap below for what's built vs. planned.
 
 ---
 
 ## Architecture
 
 ```
-GitHub PR → GitHub Actions CI
-                ↓
+GitHub PR opened
+      ↓
+ArgoCD ApplicationSet (PR generator, polls GitHub directly)
+      ↓
           Terraform (kind provider)
           provisions local cluster
                 ↓
@@ -20,17 +22,17 @@ GitHub PR → GitHub Actions CI
      ┌──────────────────────────┐
      │                          │
   main ns                  preview-{pr} ns
-  (always-on)              (per PR, auto-destroy on merge)
+  (always-on)              (per open PR, auto-destroy on close)
      │                          │
-  podinfo app              podinfo app (branch version)
+  podinfo app              podinfo app (PR's exact commit)
   prometheus/grafana
-  (planned, Sprint 5)
+  (planned, Sprint 6)
 ```
 
 **Core Principles:**
 - ArgoCD App of Apps pattern — all environments declared as code
 - One bootstrap path: `make platform-up` → `terraform apply` → cluster + ArgoCD (Helm) + root Application, in that order, with matching teardown via `terraform destroy`
-- Per-PR preview namespaces with automatic teardown (workflow defined, see note below)
+- Per-PR preview namespaces via an ArgoCD ApplicationSet (Pull Request generator) — ArgoCD polls GitHub directly and creates/destroys the preview Application itself; no CI job ever touches the cluster
 - `make` targets as the self-service interface for engineers
 
 ---
@@ -85,7 +87,7 @@ platform-fleet/
 │       │                     # cleanup of Application finalizers
 │       └── monitoring/       # (planned) — Prometheus + Grafana stack
 ├── gitops/
-│   ├── apps/              # ArgoCD App of Apps definitions
+│   ├── apps/              # ArgoCD App of Apps definitions + preview ApplicationSet
 │   ├── base/              # Kustomize base manifests
 │   │   ├── podinfo/       # Sample demo app
 │   │   └── namespaces/    # Namespace definitions
@@ -114,12 +116,12 @@ platform-fleet/
 - Deployed via: ArgoCD watching `gitops/overlays/main`
 - Auto-syncs on every merge to `main` branch
 
-### Preview (Per Pull Request) — planned
+### Preview (Per Pull Request)
 - Namespace: `preview-{pr-number}`
 - Purpose: Feature branch validation, rapid UX feedback
-- Lifecycle: workflow defined in `.github/workflows/preview.yaml` — creates/destroys the ArgoCD Application and namespace on PR open/close
-- URL posted as PR comment by GitHub Actions
-- **Known gap:** the workflow runs on a GitHub-hosted runner with no configured path to a real cluster (the local `kind` cluster isn't reachable from a GitHub-hosted runner), so it doesn't yet reach a real cluster end-to-end. Fixing this — likely via a self-hosted runner or a cloud-reachable cluster — is the next open item after this.
+- Lifecycle: an ArgoCD `ApplicationSet` (`gitops/apps/podinfo-preview-appset.yaml`) with a GitHub Pull Request generator polls open PRs directly (every ~3 min) and creates/destroys the preview `Application` itself — this is not GitHub Actions reaching into the cluster, it's ArgoCD (already running on the cluster) reaching out to GitHub. Deploys the exact commit SHA of the PR, so new pushes get picked up automatically.
+- `.github/workflows/preview.yaml` only posts a heads-up PR comment — it does no cluster work at all
+- **Known gap:** closing a PR correctly removes the `Application` and its workload (confirmed working), but the `preview-{pr}` namespace itself is left behind, empty. ArgoCD's `CreateNamespace=true` sync option creates the namespace but doesn't treat it as a resource it prunes on Application deletion. Not yet automated — for now, stale preview namespaces need a manual `kubectl delete ns preview-{n}` cleanup pass.
 
 ---
 
@@ -159,6 +161,7 @@ ArgoCD is configured with a single root `Application` that points to `gitops/app
 2. Terraform applies the root Application from `gitops/apps/root-app.yaml` directly (via `kubectl_manifest`, reading the same YAML file that's checked into the repo — no separate copy re-declared in HCL)
 3. ArgoCD takes it from there — all future changes go through Git, no manual `kubectl apply` in this flow
 4. On teardown, a destroy-time step strips ArgoCD's finalizers from any Applications in the namespace first (including ones ArgoCD's own controller created, like `podinfo-main`), so `terraform destroy` completes cleanly instead of hanging on a namespace stuck in `Terminating`
+5. That same destroy-time step deletes any `ApplicationSet`s before touching Applications — a live ApplicationSet (e.g. the preview-env PR generator) can regenerate an Application with a fresh finalizer faster than a one-time cleanup sweep can catch it, which caused a second, different destroy hang before this was fixed
 
 ---
 
@@ -184,6 +187,6 @@ ArgoCD is configured with a single root `Application` that points to `gitops/app
 - [x] Sprint 2: Terraform kind cluster + ArgoCD install
 - [x] Sprint 3: App of Apps — podinfo on main
 - [x] Sprint 4: Consolidate onto one Terraform-driven bootstrap path (cluster + ArgoCD + root Application, plus clean destroy-time Application-finalizer handling)
-- [ ] Sprint 5: Preview environments actually reaching a real cluster from GitHub Actions (workflow YAML exists, cluster connectivity doesn't yet)
+- [x] Sprint 5: Preview environments via ArgoCD ApplicationSet (PR generator) — deploy and auto-teardown on PR close confirmed working end to end; orphaned namespace cleanup still open
 - [ ] Sprint 6: Prometheus + Grafana observability
 - [ ] Sprint 7: Polish, one-liner demo, LinkedIn writeup
