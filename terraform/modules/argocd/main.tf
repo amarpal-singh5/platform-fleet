@@ -34,6 +34,23 @@ resource "helm_release" "argocd" {
           "server.insecure" = true
         }
       }
+      controller = {
+        resources = {
+          requests = {
+            cpu    = "250m"
+            memory = "512Mi"
+          }
+          limits = {
+            memory = "1Gi"
+          }
+        }
+      }
+      dex = {
+        enabled = false
+      }
+      notifications = {
+        enabled = false
+      }
     })
   ]
 

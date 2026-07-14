@@ -2,66 +2,31 @@ name: Preview Environments
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    types: [opened]
     branches: [main]
 
-env:
-  PREVIEW_NS: preview-${{ github.event.pull_request.number }}
-  APP_NAME: podinfo-preview-${{ github.event.pull_request.number }}
+permissions:
+  pull-requests: write
+  issues: write
 
+# Deploy and teardown are handled entirely by ArgoCD's podinfo-preview
+# ApplicationSet (gitops/apps/podinfo-preview-appset.yaml) - it polls
+# GitHub's PR list directly and creates/destroys the preview Application
+# itself. This workflow doesn't touch the cluster at all; it just posts
+# a heads-up comment so it's obvious a preview env is coming.
 jobs:
-  deploy-preview:
-    name: Deploy Preview
+  comment:
+    name: Comment Preview Info
     runs-on: ubuntu-latest
-    if: github.event.action != 'closed'
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Create preview ArgoCD Application
-        run: |
-          cat <<EOF | kubectl apply -f -
-          apiVersion: argoproj.io/v1alpha1
-          kind: Application
-          metadata:
-            name: ${{ env.APP_NAME }}
-            namespace: argocd
-            finalizers:
-              - resources-finalizer.argocd.argoproj.io
-          spec:
-            project: default
-            source:
-              repoURL: https://github.com/amarpal-singh5/platform-fleet.git
-              targetRevision: ${{ github.head_ref }}
-              path: gitops/overlays/preview
-            destination:
-              server: https://kubernetes.default.svc
-              namespace: ${{ env.PREVIEW_NS }}
-            syncPolicy:
-              automated:
-                prune: true
-                selfHeal: true
-              syncOptions:
-                - CreateNamespace=true
-          EOF
-
-      - name: Comment preview URL on PR
+      - name: Comment preview info on PR
         uses: actions/github-script@v7
         with:
           script: |
+            const ns = `preview-${context.issue.number}`;
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `🚀 **Preview environment deployed**\n\nNamespace: \`${{ env.PREVIEW_NS }}\`\n\nAccess locally:\n\`\`\`bash\nkubectl port-forward svc/podinfo -n ${{ env.PREVIEW_NS }} 9898:9898\n\`\`\`\n\nAuto-destroyed on PR close.`
+              body: `🚀 **Preview environment incoming**\n\nArgoCD will pick this PR up on its next poll (every ~3 min) and deploy it to \`${ns}\`.\n\nOnce synced, access locally:\n\`\`\`bash\nkubectl port-forward svc/podinfo -n ${ns} 9898:9898\n\`\`\`\n\nAuto-destroyed when this PR closes - ArgoCD notices it's no longer open and tears it down, no action needed here.`
             })
-
-  destroy-preview:
-    name: Destroy Preview
-    runs-on: ubuntu-latest
-    if: github.event.action == 'closed'
-    steps:
-      - name: Delete ArgoCD Application
-        run: kubectl delete application ${{ env.APP_NAME }} -n argocd --ignore-not-found=true
-
-      - name: Delete namespace
-        run: kubectl delete namespace ${{ env.PREVIEW_NS }} --ignore-not-found=true

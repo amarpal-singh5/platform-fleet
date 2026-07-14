@@ -1,7 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: preview-placeholder
+# No hardcoded namespace here - each PR gets a different one
+# (preview-{number}), set dynamically by the ApplicationSet template's
+# destination.namespace. ArgoCD injects it onto these resources at sync
+# time based on where the Application actually points.
 
 resources:
   - ../../base/podinfo
