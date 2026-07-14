@@ -5,6 +5,10 @@ on:
     types: [opened]
     branches: [main]
 
+permissions:
+  pull-requests: write
+  issues: write
+
 # Deploy and teardown are handled entirely by ArgoCD's podinfo-preview
 # ApplicationSet (gitops/apps/podinfo-preview-appset.yaml) - it polls
 # GitHub's PR list directly and creates/destroys the preview Application
